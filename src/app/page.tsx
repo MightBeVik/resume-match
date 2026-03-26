@@ -1,17 +1,76 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, FileSearch, Loader2 } from "lucide-react";
+import { ArrowRight, FileSearch, Loader2, Upload, FileText, X } from "lucide-react";
 
 export default function InputPage() {
   const router = useRouter();
   const [resumeText, setResumeText] = useState("");
   const [jobDescription, setJobDescription] = useState("");
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const canSubmit = resumeText.length >= 50 && jobDescription.length >= 50 && !loading;
+  const canSubmit = resumeText.length >= 50 && jobDescription.length >= 50 && !loading && !uploading;
+
+  const handleFileUpload = useCallback(async (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setError("Only PDF files are supported");
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("http://localhost:8000/api/upload-resume", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.detail || "Upload failed");
+      }
+
+      const data = await response.json();
+      setResumeText(data.text);
+      setUploadedFile(data.filename);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload file");
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileUpload(file);
+  }, [handleFileUpload]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setDragOver(false);
+  }, []);
+
+  const clearUpload = () => {
+    setUploadedFile(null);
+    setResumeText("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   const handleAnalyze = async () => {
     setLoading(true);
@@ -71,7 +130,7 @@ export default function InputPage() {
               Analyze Your Resume Match
             </h1>
             <p className="mt-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-              Paste your resume and a job description to see how well they align
+              Upload your resume and paste a job description to see how well they align
             </p>
           </div>
 
@@ -91,16 +150,81 @@ export default function InputPage() {
                 </h2>
               </div>
               <div className="p-5">
+                {/* Upload zone */}
+                {!uploadedFile && (
+                  <>
+                    <div
+                      onDrop={handleDrop}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-6 cursor-pointer transition-colors"
+                      style={{
+                        borderColor: dragOver ? "var(--accent)" : "var(--border)",
+                        background: dragOver ? "var(--accent-light)" : "var(--bg-page)",
+                      }}
+                    >
+                      {uploading ? (
+                        <Loader2 size={24} className="animate-spin" style={{ color: "var(--accent)" }} />
+                      ) : (
+                        <Upload size={24} style={{ color: "var(--text-muted)" }} />
+                      )}
+                      <p className="mt-2 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+                        {uploading ? "Extracting text..." : "Drop PDF here or click to upload"}
+                      </p>
+                      <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                        PDF files only
+                      </p>
+                    </div>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".pdf"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleFileUpload(file);
+                      }}
+                    />
+
+                    {/* Divider */}
+                    <div className="flex items-center gap-3 my-4">
+                      <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+                      <span className="text-xs uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>or paste text</span>
+                      <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+                    </div>
+                  </>
+                )}
+
+                {/* Uploaded file indicator */}
+                {uploadedFile && (
+                  <div
+                    className="flex items-center gap-3 p-3 rounded-lg mb-3"
+                    style={{ background: "var(--success-bg)" }}
+                  >
+                    <FileText size={16} style={{ color: "var(--success-text)" }} />
+                    <span className="text-xs font-medium flex-1 truncate" style={{ color: "var(--success-text)" }}>
+                      {uploadedFile}
+                    </span>
+                    <button onClick={clearUpload} className="p-0.5 rounded hover:opacity-70">
+                      <X size={14} style={{ color: "var(--success-text)" }} />
+                    </button>
+                  </div>
+                )}
+
                 <textarea
                   value={resumeText}
-                  onChange={(e) => setResumeText(e.target.value)}
+                  onChange={(e) => {
+                    setResumeText(e.target.value);
+                    if (uploadedFile) setUploadedFile(null);
+                  }}
                   className="w-full rounded-lg border p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[var(--accent)] transition-shadow"
                   style={{
                     borderColor: "var(--border)",
                     color: "var(--text-primary)",
                     background: "var(--bg-page)",
                   }}
-                  rows={14}
+                  rows={uploadedFile ? 8 : 6}
                   placeholder="Paste your resume text here..."
                 />
                 <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
