@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+:root {
+  /* Resume Matcher colors */
+  --accent-red: #E42313;
+  --badge-green-bg: #DCFCE7;
+  --badge-green-text: #166534;
+  --badge-muted-bg: #F3F4F6;
+  --badge-muted-text: #6B7280;
+  --bg-page: #FFFFFF;
+  --bg-surface: #FAFAFA;
+  --border: #E8E8E8;
+  --danger-red: #EF4444;
+  --skeleton-bg: #E5E7EB;
+  --success-green: #22C55E;
+  --text-primary: #0D0D0D;
+  --text-secondary: #7A7A7A;
+  --text-muted: #B0B0B0;
+  --warning-yellow: #F59E0B;
+
+  /* DataGrid colors (Japanese-Swiss) */
+  --dg-bg: #FAFAFA;
+  --dg-surface: #F5F5F5;
+  --dg-white: #FFFFFF;
+  --dg-dark: #000000;
+  --dg-text: #000000;
+  --dg-text-secondary: #5E5E5E;
+  --dg-text-tertiary: #666666;
+  --dg-text-muted: #999999;
+  --dg-text-on-dark: #FAFAFA;
+  --dg-accent: #DC2626;
+  --dg-success: #22C55E;
+  --dg-info: #3B82F6;
+  --dg-border: #E5E5E5;
+  --dg-pin-bg: #FEF2F2;
+  --dg-drag-bg: #EFF6FF;
+  --dg-drag-border: #3B82F6;
+}
+
+@layer base {
+  html, body {
+    height: 100%;
+  }
+
+  .font-heading {
+    font-family: "Space Grotesk", sans-serif;
+  }
+
+  .font-body {
+    font-family: "Inter", sans-serif;
+  }
+
+  .font-ui {
+    font-family: "Sora", sans-serif;
+  }
+
+  .font-mono {
+    font-family: "IBM Plex Mono", monospace;
+  }
+}
