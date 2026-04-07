@@ -45,3 +45,18 @@ def test_extract_entities_returns_all_keys():
     assert "skills" in result
     assert "organizations" in result
     assert "education" in result
+
+
+def test_extract_skills_avoids_substring_false_positives():
+    text = "Worked at Google building JavaScript apps for modern web teams."
+    skills = [skill.lower() for skill in extract_skills(text)]
+    assert "go" not in skills
+    assert "java" not in skills
+    assert "javascript" in skills
+
+
+def test_extract_entities_filters_skill_noise_from_organizations():
+    result = extract_entities("Skills: React, TypeScript, Git, Docker")
+    orgs = [org.lower() for org in result["organizations"]]
+    assert "typescript" not in orgs
+    assert "git" not in orgs

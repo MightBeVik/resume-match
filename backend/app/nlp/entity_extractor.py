@@ -1,5 +1,6 @@
 """Entity extraction using spaCy NER, POS tagging, and custom patterns."""
 import re
+from functools import lru_cache
 
 import spacy
 
@@ -30,12 +31,97 @@ DEGREE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+DISPLAY_OVERRIDES = {
+    "agile": "Agile",
+    "aws": "AWS",
+    "azure": "Azure",
+    "bash": "Bash",
+    "c#": "C#",
+    "c++": "C++",
+    "ci/cd": "CI/CD",
+    "css": "CSS",
+    "devops": "DevOps",
+    "django": "Django",
+    "docker": "Docker",
+    "excel": "Excel",
+    "fastapi": "FastAPI",
+    "figma": "Figma",
+    "gcp": "GCP",
+    "git": "Git",
+    "github": "GitHub",
+    "gitlab": "GitLab",
+    "go": "Go",
+    "graphql": "GraphQL",
+    "grpc": "gRPC",
+    "html": "HTML",
+    "java": "Java",
+    "javascript": "JavaScript",
+    "jenkins": "Jenkins",
+    "jira": "Jira",
+    "kubernetes": "Kubernetes",
+    "linux": "Linux",
+    "machine learning": "Machine Learning",
+    "microservices": "Microservices",
+    "mongodb": "MongoDB",
+    "mysql": "MySQL",
+    "nlp": "NLP",
+    "node.js": "Node.js",
+    "nodejs": "Node.js",
+    "nosql": "NoSQL",
+    "numpy": "NumPy",
+    "oracle": "Oracle",
+    "pandas": "Pandas",
+    "php": "PHP",
+    "postgresql": "PostgreSQL",
+    "power bi": "Power BI",
+    "powerpoint": "PowerPoint",
+    "python": "Python",
+    "pytorch": "PyTorch",
+    "react": "React",
+    "redis": "Redis",
+    "rest": "REST",
+    "rest apis": "REST APIs",
+    "ruby": "Ruby",
+    "rust": "Rust",
+    "salesforce": "Salesforce",
+    "sap": "SAP",
+    "sass": "Sass",
+    "scikit-learn": "scikit-learn",
+    "scrum": "Scrum",
+    "sketch": "Sketch",
+    "sql": "SQL",
+    "swift": "Swift",
+    "tableau": "Tableau",
+    "tailwind": "Tailwind",
+    "tensorflow": "TensorFlow",
+    "terraform": "Terraform",
+    "typescript": "TypeScript",
+    "vite": "Vite",
+    "vue": "Vue",
+    "webpack": "Webpack",
+}
+
 
 def _get_nlp():
     """Get spaCy model, preferring the preloaded one."""
     if models_state.nlp_model is not None:
         return models_state.nlp_model
     return spacy.load("en_core_web_sm")
+
+
+def _format_skill(skill: str) -> str:
+    normalized = skill.strip().lower()
+    return DISPLAY_OVERRIDES.get(normalized, skill.strip())
+
+
+@lru_cache(maxsize=None)
+def _compile_skill_pattern(skill: str) -> re.Pattern[str]:
+    escaped = re.escape(skill)
+    return re.compile(rf"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])", re.IGNORECASE)
+
+
+def _contains_skill(text: str, skill: str) -> bool:
+    return bool(_compile_skill_pattern(skill).search(text))
 
 
 def extract_skills(text: str) -> list[str]:
@@ -50,14 +136,14 @@ def extract_skills(text: str) -> list[str]:
     # Method 1: Match against known skills list
     text_lower = text.lower()
     for skill in KNOWN_SKILLS:
-        if skill in text_lower:
-            found_skills.add(skill.title() if len(skill) > 3 else skill.upper())
+        if _contains_skill(text_lower, skill):
+            found_skills.add(_format_skill(skill))
 
     # Method 2: Extract noun phrases (noun phrase chunking)
     for chunk in doc.noun_chunks:
         chunk_lower = chunk.text.lower().strip()
         if chunk_lower in KNOWN_SKILLS:
-            found_skills.add(chunk.text.strip())
+            found_skills.add(_format_skill(chunk_lower))
 
     # Method 3: Look for comma-separated lists after skill-related headers
     skill_list_pattern = re.compile(
@@ -70,11 +156,11 @@ def extract_skills(text: str) -> list[str]:
             cleaned = item.strip().strip("-•* ")
             if cleaned and 1 < len(cleaned) < 40:
                 if cleaned.lower() in KNOWN_SKILLS:
-                    found_skills.add(cleaned.strip())
+                    found_skills.add(_format_skill(cleaned))
                 elif cleaned[0].isupper() and len(cleaned.split()) <= 3:
                     found_skills.add(cleaned.strip())
 
-    return sorted(found_skills)
+    return sorted({_format_skill(skill) for skill in found_skills}, key=str.lower)
 
 
 def extract_education(text: str) -> list[str]:
@@ -100,7 +186,8 @@ def extract_entities(text: str) -> dict[str, list[str]]:
 
     organizations = set()
     for ent in doc.ents:
-        if ent.label_ == "ORG":
+        cleaned = ent.text.strip()
+        if ent.label_ == "ORG" and cleaned and "," not in cleaned and cleaned.lower() not in KNOWN_SKILLS:
             organizations.add(ent.text.strip())
 
     return {

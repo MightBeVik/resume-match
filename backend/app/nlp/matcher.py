@@ -17,6 +17,20 @@ WEIGHTS = {
     "semantic": 0.10,
 }
 
+STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "build", "for", "in", "of", "on", "or",
+    "the", "to", "with", "using", "strong", "understanding", "experience", "proficiency",
+    "required", "preferred", "qualification", "qualifications", "years", "year", "plus",
+    "role", "related", "field",
+}
+
+DEGREE_LEVELS = {
+    "associate": {"associate"},
+    "bachelor": {"bachelor", "bachelors", "b.s", "bs", "b.a", "ba"},
+    "master": {"master", "masters", "m.s", "ms", "m.a", "ma", "mba"},
+    "phd": {"phd", "doctorate"},
+}
+
 
 def _get_verdict(score: int) -> str:
     """Map overall score to verdict string."""
@@ -53,7 +67,65 @@ def _generate_summary(score: int, sections: dict) -> str:
     return summary
 
 
-def _match_items(jd_items: list[str], resume_text: str, resume_skills: list[str]) -> dict:
+def _normalize_text(text: str) -> str:
+    text = text.lower()
+    text = text.replace("’", "'")
+    text = re.sub(r"[^a-z0-9+#./\s]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _tokenize_meaningful(text: str) -> set[str]:
+    tokens = set(re.findall(r"[a-z0-9+#/.]+", _normalize_text(text)))
+    return {token for token in tokens if len(token) > 2 and token not in STOPWORDS}
+
+
+def _split_resume_segments(text: str) -> list[str]:
+    parts = re.split(r"\n+|(?<=[.!?])\s+", text)
+    return [part.strip() for part in parts if len(part.strip()) > 10]
+
+
+def _get_degree_level(text: str) -> str | None:
+    normalized = _normalize_text(text)
+    for level, markers in DEGREE_LEVELS.items():
+        if any(marker in normalized for marker in markers):
+            return level
+    return None
+
+
+def _get_field_tokens(text: str) -> set[str]:
+    normalized = _normalize_text(text)
+    if "computer science" in normalized:
+        return {"computer", "science"}
+    if "data science" in normalized:
+        return {"data", "science"}
+    match = re.search(r"\bin\s+([a-z\s&]+)", normalized)
+    if not match:
+        return set()
+    return {token for token in re.findall(r"[a-z]+", match.group(1)) if token not in STOPWORDS}
+
+
+def _match_education_item(item: str, resume_text: str, resume_education: list[str]) -> str:
+    item_level = _get_degree_level(item)
+    resume_levels = {_get_degree_level(entry) for entry in resume_education}
+    resume_levels.discard(None)
+
+    item_fields = _get_field_tokens(item)
+    resume_field_text = " ".join(resume_education) or resume_text
+    resume_fields = _get_field_tokens(resume_field_text)
+    normalized_resume = _normalize_text(resume_text)
+
+    level_matches = item_level is None or item_level in resume_levels
+    field_matches = not item_fields or bool(item_fields & resume_fields) or all(field in normalized_resume for field in item_fields)
+
+    if level_matches and field_matches:
+        return "matched"
+    if field_matches and item_level is None:
+        return "partial"
+    return "missing"
+
+
+def _match_items(jd_items: list[str], resume_text: str, resume_skills: list[str], resume_education: list[str]) -> dict:
     """Match JD requirement items against resume content.
 
     Returns: {"score": int, "matched": [...], "partial": [...], "missing": [...]}
@@ -66,7 +138,9 @@ def _match_items(jd_items: list[str], resume_text: str, resume_skills: list[str]
     missing = []
 
     resume_lower = resume_text.lower()
+    normalized_resume = _normalize_text(resume_text)
     resume_skills_lower = [s.lower() for s in resume_skills]
+    resume_segments = _split_resume_segments(resume_text)
 
     for item in jd_items:
         item_clean = item.strip()
@@ -74,20 +148,35 @@ def _match_items(jd_items: list[str], resume_text: str, resume_skills: list[str]
             continue
 
         item_lower = item_clean.lower()
+        normalized_item = _normalize_text(item_clean)
+
+        if _is_education_item(item_clean):
+            education_match = _match_education_item(item_clean, resume_text, resume_education)
+            if education_match == "matched":
+                matched.append(item_clean)
+            elif education_match == "partial":
+                partial.append(item_clean)
+            else:
+                missing.append(item_clean)
+            continue
+
+        item_skills = {skill.lower() for skill in extract_skills(item_clean)}
+        if item_skills and item_skills.issubset(set(resume_skills_lower)):
+            matched.append(item_clean)
+            continue
 
         # Check 1: Direct text match (exact or substring)
-        if item_lower in resume_lower:
+        if normalized_item and normalized_item in normalized_resume:
             matched.append(item_clean)
             continue
 
         # Check 2: Word-level overlap check
-        item_words = set(item_lower.split())
-        item_words = {w for w in item_words if len(w) > 2}
+        item_words = _tokenize_meaningful(item_clean)
 
         if item_words:
-            overlap = sum(1 for w in item_words if w in resume_lower)
+            overlap = sum(1 for w in item_words if w in normalized_resume)
             overlap_ratio = overlap / len(item_words)
-            if overlap_ratio > 0.4:
+            if overlap_ratio >= 0.6 or (len(item_words) <= 3 and overlap_ratio >= 0.5):
                 matched.append(item_clean)
                 continue
 
@@ -101,10 +190,22 @@ def _match_items(jd_items: list[str], resume_text: str, resume_skills: list[str]
             continue
 
         # Check 4: Semantic similarity
-        sim = item_semantic_similarity(item_clean, resume_text[:500])
-        if sim > 0.8:
+        best_segment = ""
+        best_overlap = 0
+        for segment in resume_segments:
+            segment_overlap = len(item_words & _tokenize_meaningful(segment)) if item_words else 0
+            if segment_overlap > best_overlap:
+                best_segment = segment
+                best_overlap = segment_overlap
+
+        if best_segment and best_overlap > 0:
+            sim = item_semantic_similarity(item_clean, best_segment)
+        else:
+            sim = 0.0
+
+        if sim >= 0.88:
             matched.append(item_clean)
-        elif sim > 0.5:
+        elif sim >= 0.72:
             partial.append(item_clean)
         else:
             missing.append(item_clean)
@@ -165,6 +266,7 @@ def analyze_match(resume_text: str, job_description: str) -> dict:
     # Step 3: Extract entities
     resume_entities = extract_entities(resume_text)
     resume_skills = resume_entities["skills"]
+    resume_education = resume_entities["education"]
 
     full_resume = resume_text
 
@@ -173,16 +275,20 @@ def analyze_match(resume_text: str, job_description: str) -> dict:
     resume_keywords = extract_keywords(resume_text, top_n=15)
 
     # Step 5: Per-section matching
+    skill_items = [item for item in jd_sections["requirements"] if not _is_education_item(item)]
+
     skills_result = _match_items(
-        jd_sections["requirements"],
+        skill_items,
         full_resume,
         resume_skills,
+        resume_education,
     )
 
     experience_result = _match_items(
         jd_sections["responsibilities"],
         resume_sections.get("experience", "") + " " + resume_sections.get("summary", ""),
         resume_skills,
+        resume_education,
     )
 
     # Education: filter education items from requirements, or extract from full JD
@@ -193,12 +299,14 @@ def analyze_match(resume_text: str, job_description: str) -> dict:
         edu_items,
         resume_sections.get("education", "") + " " + full_resume,
         resume_skills,
+        resume_education,
     )
 
     preferred_result = _match_items(
         jd_sections["preferred"],
         full_resume,
         resume_skills,
+        resume_education,
     )
 
     # Step 6: Similarities

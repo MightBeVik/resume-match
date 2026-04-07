@@ -52,7 +52,7 @@ def _extract_items(text: str) -> list[str]:
     lines = text.strip().split("\n")
     items = []
     for line in lines:
-        line = re.sub(r"^[\s\-\*\•\–\—\d.]+", "", line).strip()
+        line = re.sub(r"^\s*(?:[-*•–—]+|\d+[.)])\s*", "", line).strip()
         if line and len(line) > 3:
             items.append(line)
     return items

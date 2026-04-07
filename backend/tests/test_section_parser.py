@@ -57,6 +57,11 @@ def test_parse_structured_jd_finds_requirements():
     assert any("react" in r.lower() or "typescript" in r.lower() for r in result["requirements"])
 
 
+def test_parse_structured_jd_preserves_numeric_prefixes():
+    result = parse_job_description(STRUCTURED_JD)
+    assert any("5+ years" in requirement for requirement in result["requirements"])
+
+
 def test_parse_structured_jd_finds_responsibilities():
     result = parse_job_description(STRUCTURED_JD)
     assert len(result["responsibilities"]) > 0

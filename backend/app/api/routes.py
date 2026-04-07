@@ -4,7 +4,8 @@ import io
 import pdfplumber
 from fastapi import APIRouter, HTTPException, UploadFile, File
 
-from app.models.schemas import AnalyzeRequest, AnalyzeResponse
+from app.jobs.ranker import rank_jobs_for_resume
+from app.models.schemas import AnalyzeRequest, AnalyzeResponse, RankJobsRequest, RankJobsResponse
 from app.nlp.matcher import analyze_match
 
 router = APIRouter()
@@ -50,3 +51,14 @@ async def analyze(request: AnalyzeRequest):
             status_code=500,
             detail=f"NLP pipeline failed: {str(e)}",
         )
+
+
+@router.post("/rank-jobs", response_model=RankJobsResponse)
+async def rank_jobs(request: RankJobsRequest):
+    """Rank stored jobs against a resume using the NLP matcher."""
+    try:
+        return rank_jobs_for_resume(request.model_dump())
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Job ranking failed: {str(exc)}") from exc

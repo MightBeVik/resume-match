@@ -2,12 +2,21 @@
 
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, FileSearch, Loader2, Upload, FileText, X } from "lucide-react";
+import { ArrowRight, FileSearch, Loader2, Upload, FileText, X, ListFilter, MapPin } from "lucide-react";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
+type Mode = "single" | "rank";
 
 export default function InputPage() {
   const router = useRouter();
+  const [mode, setMode] = useState<Mode>("rank");
   const [resumeText, setResumeText] = useState("");
   const [jobDescription, setJobDescription] = useState("");
+  const [province, setProvince] = useState("ON");
+  const [city, setCity] = useState("");
+  const [jobTitleQuery, setJobTitleQuery] = useState("");
+  const [limit, setLimit] = useState("20");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<string | null>(null);
@@ -15,7 +24,7 @@ export default function InputPage() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const canSubmit = resumeText.length >= 50 && jobDescription.length >= 50 && !loading && !uploading;
+  const canSubmit = resumeText.length >= 50 && !loading && !uploading && (mode === "rank" || jobDescription.length >= 50);
 
   const handleFileUpload = useCallback(async (file: File) => {
     if (!file.name.toLowerCase().endsWith(".pdf")) {
@@ -30,7 +39,7 @@ export default function InputPage() {
       const formData = new FormData();
       formData.append("file", file);
 
-      const response = await fetch("http://localhost:8000/api/upload-resume", {
+      const response = await fetch(`${API_BASE_URL}/api/upload-resume`, {
         method: "POST",
         body: formData,
       });
@@ -77,13 +86,25 @@ export default function InputPage() {
     setError(null);
 
     try {
-      const response = await fetch("http://localhost:8000/api/analyze", {
+      const endpoint = mode === "single" ? `${API_BASE_URL}/api/analyze` : `${API_BASE_URL}/api/rank-jobs`;
+      const payload = mode === "single"
+        ? {
+            resume_text: resumeText,
+            job_description: jobDescription,
+          }
+        : {
+            resume_text: resumeText,
+            province: province || null,
+            city: city || null,
+            job_title_query: jobTitleQuery || null,
+            limit: Number(limit) || 20,
+            candidate_pool: Math.max(50, Number(limit) * 5 || 100),
+          };
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          resume_text: resumeText,
-          job_description: jobDescription,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -92,7 +113,14 @@ export default function InputPage() {
       }
 
       const data = await response.json();
-      sessionStorage.setItem("matchResults", JSON.stringify(data));
+      sessionStorage.setItem(
+        "matchResults",
+        JSON.stringify({
+          mode,
+          payload: data,
+          filters: { province, city, jobTitleQuery, limit },
+        }),
+      );
       router.push("/results");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -127,15 +155,34 @@ export default function InputPage() {
           {/* Title */}
           <div className="text-center mb-10">
             <h1 className="text-3xl font-extrabold tracking-tight" style={{ color: "var(--text-primary)" }}>
-              Analyze Your Resume Match
+              Match Your Resume To Real Jobs
             </h1>
             <p className="mt-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-              Upload your resume and paste a job description to see how well they align
+              Upload your resume, then either compare against one JD or rank it against the stored Canadian jobs corpus
             </p>
+            <div className="mt-5 inline-flex rounded-xl border p-1" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>
+              {[
+                { key: "rank", label: "Rank Stored Jobs", icon: ListFilter },
+                { key: "single", label: "Single JD Analysis", icon: FileSearch },
+              ].map(({ key, label, icon: Icon }) => (
+                <button
+                  key={key}
+                  onClick={() => setMode(key as Mode)}
+                  className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors"
+                  style={{
+                    background: mode === key ? "var(--text-primary)" : "transparent",
+                    color: mode === key ? "white" : "var(--text-secondary)",
+                  }}
+                >
+                  <Icon size={15} />
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Input cards */}
-          <div className="grid grid-cols-2 gap-6">
+          <div className={`grid gap-6 ${mode === "single" ? "grid-cols-2" : "grid-cols-[1.2fr_0.8fr]"}`}>
             {/* Resume */}
             <div
               className="rounded-[var(--radius)] border overflow-hidden"
@@ -233,7 +280,7 @@ export default function InputPage() {
               </div>
             </div>
 
-            {/* Job Description */}
+            {/* Right panel */}
             <div
               className="rounded-[var(--radius)] border overflow-hidden"
               style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}
@@ -243,25 +290,86 @@ export default function InputPage() {
                 style={{ borderColor: "var(--border)", background: "var(--bg-page)" }}
               >
                 <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-                  Job Description
+                  {mode === "single" ? "Job Description" : "Ranking Filters"}
                 </h2>
               </div>
               <div className="p-5">
-                <textarea
-                  value={jobDescription}
-                  onChange={(e) => setJobDescription(e.target.value)}
-                  className="w-full rounded-lg border p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[var(--accent)] transition-shadow"
-                  style={{
-                    borderColor: "var(--border)",
-                    color: "var(--text-primary)",
-                    background: "var(--bg-page)",
-                  }}
-                  rows={14}
-                  placeholder="Paste the job description here..."
-                />
-                <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
-                  {jobDescription.length} characters {jobDescription.length < 50 && jobDescription.length > 0 && "· minimum 50"}
-                </p>
+                {mode === "single" ? (
+                  <>
+                    <textarea
+                      value={jobDescription}
+                      onChange={(e) => setJobDescription(e.target.value)}
+                      className="w-full rounded-lg border p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[var(--accent)] transition-shadow"
+                      style={{
+                        borderColor: "var(--border)",
+                        color: "var(--text-primary)",
+                        background: "var(--bg-page)",
+                      }}
+                      rows={14}
+                      placeholder="Paste the job description here..."
+                    />
+                    <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
+                      {jobDescription.length} characters {jobDescription.length < 50 && jobDescription.length > 0 && "· minimum 50"}
+                    </p>
+                  </>
+                ) : (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                        Province
+                      </label>
+                      <input
+                        value={province}
+                        onChange={(e) => setProvince(e.target.value.toUpperCase())}
+                        className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                        style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--bg-page)" }}
+                        placeholder="ON"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                        City
+                      </label>
+                      <div className="relative">
+                        <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
+                        <input
+                          value={city}
+                          onChange={(e) => setCity(e.target.value)}
+                          className="w-full rounded-lg border py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                          style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--bg-page)" }}
+                          placeholder="Toronto"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                        Job Title Contains
+                      </label>
+                      <input
+                        value={jobTitleQuery}
+                        onChange={(e) => setJobTitleQuery(e.target.value)}
+                        className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                        style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--bg-page)" }}
+                        placeholder="frontend"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                        Results Limit
+                      </label>
+                      <input
+                        value={limit}
+                        onChange={(e) => setLimit(e.target.value)}
+                        className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                        style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--bg-page)" }}
+                        placeholder="20"
+                      />
+                    </div>
+                    <div className="rounded-lg border p-3 text-sm" style={{ borderColor: "var(--border)", background: "var(--bg-page)", color: "var(--text-secondary)" }}>
+                      This mode ranks your resume against the local `jobs.db` corpus built from Job Bank and OaSIS-enriched NOC data.
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -291,7 +399,7 @@ export default function InputPage() {
                 </>
               ) : (
                 <>
-                  Analyze Match
+                  {mode === "single" ? "Analyze Match" : "Rank Jobs"}
                   <ArrowRight size={16} />
                 </>
               )}

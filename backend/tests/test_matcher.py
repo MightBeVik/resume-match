@@ -113,3 +113,16 @@ def test_analyze_match_poor_resume_scores_low():
     """
     result = analyze_match(unrelated_resume, JOB_DESCRIPTION)
     assert result["overall_score"] < 40
+
+
+def test_analyze_match_matches_bachelors_requirement():
+    result = analyze_match(RESUME, JOB_DESCRIPTION)
+    assert "Bachelor's degree in Computer Science or related field" in result["sections"]["education"]["matched"]
+    assert "Bachelor's degree in Computer Science or related field" not in result["sections"]["skills"]["matched"]
+
+
+def test_analyze_match_does_not_false_positive_preferred_items():
+    result = analyze_match(RESUME, JOB_DESCRIPTION)
+    preferred = result["sections"]["preferred"]
+    assert "Master's degree" in preferred["missing"]
+    assert "GraphQL experience" in preferred["missing"]
