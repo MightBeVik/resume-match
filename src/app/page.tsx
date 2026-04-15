@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, FileSearch, Loader2, Upload, FileText, X, ListFilter, MapPin } from "lucide-react";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -132,24 +133,39 @@ export default function InputPage() {
     <div className="h-full flex flex-col">
       {/* Header */}
       <header
-        className="flex items-center gap-3 px-8 py-4 border-b bg-[var(--bg-card)]"
+        className="flex items-center justify-between px-8 py-4 border-b bg-[var(--bg-card)]"
         style={{ borderColor: "var(--border)" }}
       >
-        <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center"
-          style={{ background: "var(--text-primary)" }}
-        >
-          <FileSearch size={16} className="text-white" />
+        <div className="flex items-center gap-3">
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{ background: "var(--text-primary)" }}
+          >
+            <FileSearch size={16} style={{ color: "var(--text-on-primary)" }} />
+          </div>
+          <span className="text-lg font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+            ResumeMatch
+          </span>
+          <span className="text-xs ml-1" style={{ color: "var(--text-muted)" }}>
+            NLP-Powered Analysis
+          </span>
         </div>
-        <span className="text-lg font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
-          ResumeMatch
-        </span>
-        <span className="text-xs ml-1" style={{ color: "var(--text-muted)" }}>
-          NLP-Powered Analysis
-        </span>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <button
+            onClick={() => router.push("/about")}
+            className="text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors"
+            style={{
+              color: "var(--accent)",
+              background: "var(--accent-light)",
+              border: "1px solid var(--accent)",
+            }}
+          >
+            About
+          </button>
+        </div>
       </header>
 
-      {/* Main content */}
       <main className="flex-1 flex flex-col items-center justify-center px-8 py-12">
         <div className="w-full max-w-4xl">
           {/* Title */}
@@ -171,7 +187,7 @@ export default function InputPage() {
                   className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors"
                   style={{
                     background: mode === key ? "var(--text-primary)" : "transparent",
-                    color: mode === key ? "white" : "var(--text-secondary)",
+                    color: mode === key ? "var(--text-on-primary)" : "var(--text-secondary)",
                   }}
                 >
                   <Icon size={15} />
@@ -389,8 +405,8 @@ export default function InputPage() {
             <button
               onClick={handleAnalyze}
               disabled={!canSubmit}
-              className="flex items-center gap-2 px-8 py-3 rounded-lg text-sm font-semibold text-white transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
-              style={{ background: "var(--text-primary)" }}
+              className="flex items-center gap-2 px-8 py-3 rounded-lg text-sm font-semibold transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ background: "var(--text-primary)", color: "var(--text-on-primary)" }}
             >
               {loading ? (
                 <>

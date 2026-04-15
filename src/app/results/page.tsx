@@ -6,6 +6,7 @@ import { FileSearch, ArrowLeft, FlaskConical, MapPin, Building2 } from "lucide-r
 import { HeroScore } from "@/components/results/hero-score";
 import { SectionAccordion } from "@/components/results/section-accordion";
 import { NlpDetailsPanel } from "@/components/results/nlp-details-panel";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 interface MatchResults {
   overall_score: number;
@@ -129,23 +130,36 @@ export default function ResultsPage() {
     return (
       <div className="h-full flex flex-col">
         <header
-          className="flex items-center gap-3 px-8 py-4 border-b bg-[var(--bg-card)]"
+          className="flex items-center justify-between px-8 py-4 border-b bg-[var(--bg-card)]"
           style={{ borderColor: "var(--border)" }}
         >
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center"
-            style={{ background: "var(--text-primary)" }}
-          >
-            <FileSearch size={16} className="text-white" />
+          <div className="flex items-center gap-3">
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center"
+              style={{ background: "var(--text-primary)" }}
+            >
+              <FileSearch size={16} style={{ color: "var(--text-on-primary)" }} />
+            </div>
+            <span className="text-lg font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+              ResumeMatch
+            </span>
           </div>
-          <span className="text-lg font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
-            ResumeMatch
-          </span>
           <div className="ml-auto flex items-center gap-3">
             <button
+              onClick={() => router.push("/about")}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+              style={{
+                color: "var(--accent)",
+                background: "var(--accent-light)",
+                border: "1px solid var(--accent)",
+              }}
+            >
+              About
+            </button>
+            <button
               onClick={() => router.push("/")}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white"
-              style={{ background: "var(--text-primary)" }}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold"
+              style={{ background: "var(--text-primary)", color: "var(--text-on-primary)" }}
             >
               <ArrowLeft size={14} />
               New Search
@@ -237,19 +251,22 @@ export default function ResultsPage() {
     <div className="h-full flex flex-col">
       {/* Header */}
       <header
-        className="flex items-center gap-3 px-8 py-4 border-b bg-[var(--bg-card)]"
+        className="flex items-center justify-between px-8 py-4 border-b bg-[var(--bg-card)]"
         style={{ borderColor: "var(--border)" }}
       >
-        <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center"
-          style={{ background: "var(--text-primary)" }}
-        >
-          <FileSearch size={16} className="text-white" />
+        <div className="flex items-center gap-3">
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{ background: "var(--text-primary)" }}
+          >
+            <FileSearch size={16} style={{ color: "var(--text-on-primary)" }} />
+          </div>
+          <span className="text-lg font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+            ResumeMatch
+          </span>
         </div>
-        <span className="text-lg font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
-          ResumeMatch
-        </span>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-2">
+          <ThemeToggle />
           <button
             onClick={() => setShowNlpDetails(!showNlpDetails)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
@@ -263,9 +280,20 @@ export default function ResultsPage() {
             NLP Details
           </button>
           <button
+            onClick={() => router.push("/about")}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+            style={{
+              color: "var(--accent)",
+              background: "var(--accent-light)",
+              border: "1px solid var(--accent)",
+            }}
+          >
+            About
+          </button>
+          <button
             onClick={() => router.push("/")}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white"
-            style={{ background: "var(--text-primary)" }}
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold"
+            style={{ background: "var(--text-primary)", color: "var(--text-on-primary)" }}
           >
             <ArrowLeft size={14} />
             New Analysis
