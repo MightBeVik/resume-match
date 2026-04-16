@@ -120,3 +120,79 @@ def fetch_rankable_jobs(filters: dict[str, str | int | None]) -> list[sqlite3.Ro
                 f"Could not query enriched_jobs from {db_path}. Ensure 05_load.py completed successfully."
             ) from exc
     return rows
+
+
+def fetch_jobs_search(
+    keyword: str | None,
+    province: str | None,
+    city: str | None,
+    broad_category: str | None,
+    page: int,
+    page_size: int,
+) -> tuple[int, list[sqlite3.Row]]:
+    """Paginated job search. Returns (total_count, rows_for_page)."""
+    db_path = resolve_jobs_db_path()
+    if not db_path.exists():
+        raise FileNotFoundError(
+            f"Jobs database not found at {db_path}. Build it with job-pipeline/scripts/run_all.py first."
+        )
+
+    clauses: list[str] = ["jd_text IS NOT NULL", "TRIM(jd_text) <> ''"]
+    parameters: list[object] = []
+
+    if keyword:
+        clauses.append("(LOWER(job_title) LIKE LOWER(?) OR LOWER(jd_text) LIKE LOWER(?))")
+        parameters.extend([f"%{keyword}%", f"%{keyword}%"])
+    if province:
+        province_values = _expand_province_filter(province)
+        if province_values:
+            placeholders = ", ".join("LOWER(?)" for _ in province_values)
+            clauses.append(f"LOWER(province) IN ({placeholders})")
+            parameters.extend(province_values)
+    if city:
+        clauses.append("LOWER(city) LIKE LOWER(?)")
+        parameters.append(f"%{city}%")
+    if broad_category:
+        clauses.append("LOWER(broad_category) LIKE LOWER(?)")
+        parameters.append(f"%{broad_category}%")
+
+    where = " AND ".join(clauses)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        count_row = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM enriched_jobs WHERE {where}", parameters
+        ).fetchone()
+        total = count_row["cnt"]
+
+        offset = (page - 1) * page_size
+        rows = conn.execute(
+            f"""SELECT id, job_title, employer_name, city, province, salary,
+                       broad_category, date_posted,
+                       SUBSTR(jd_text, 1, 200) AS jd_preview
+                FROM enriched_jobs WHERE {where}
+                ORDER BY COALESCE(date_posted,'') DESC, id DESC
+                LIMIT ? OFFSET ?""",
+            [*parameters, page_size, offset],
+        ).fetchall()
+
+    return total, rows
+
+
+def fetch_jobs_by_ids(job_ids: list[int]) -> list[sqlite3.Row]:
+    """Fetch full job rows (including jd_text) for a list of IDs."""
+    db_path = resolve_jobs_db_path()
+    if not db_path.exists():
+        raise FileNotFoundError(
+            f"Jobs database not found at {db_path}."
+        )
+    if not job_ids:
+        return []
+
+    placeholders = ",".join("?" for _ in job_ids)
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        return conn.execute(
+            f"SELECT * FROM enriched_jobs WHERE id IN ({placeholders})",
+            job_ids,
+        ).fetchall()

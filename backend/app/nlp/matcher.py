@@ -6,6 +6,7 @@ from app.nlp.section_parser import parse_job_description, parse_resume
 from app.nlp.entity_extractor import extract_entities, extract_skills
 from app.nlp.keyword_extractor import extract_keywords
 from app.nlp.similarity import tfidf_cosine_similarity, semantic_similarity, item_semantic_similarity
+from app.nlp.word2vec_expander import check_w2v_partial, generate_rewrite_suggestions
 
 
 # Score weights
@@ -208,7 +209,12 @@ def _match_items(jd_items: list[str], resume_text: str, resume_skills: list[str]
         elif sim >= 0.72:
             partial.append(item_clean)
         else:
-            missing.append(item_clean)
+            # Step 5 (W2V): check if a semantic synonym exists in the resume
+            w2v_hit, _ = check_w2v_partial(item_clean, resume_text)
+            if w2v_hit:
+                partial.append(item_clean)
+            else:
+                missing.append(item_clean)
 
     total = len(matched) + len(partial) + len(missing)
     if total == 0:
@@ -334,11 +340,15 @@ def analyze_match(resume_text: str, job_description: str) -> dict:
     verdict = _get_verdict(overall_score)
     summary = _generate_summary(overall_score, sections)
 
+    # Generate W2V-powered rewrite suggestions for all missing items
+    rewrite_suggestions = generate_rewrite_suggestions(sections, resume_text)
+
     return {
         "overall_score": overall_score,
         "verdict": verdict,
         "summary": summary,
         "sections": sections,
+        "rewrite_suggestions": rewrite_suggestions,
         "nlp_details": {
             "jd_sections_parsed": {k: v for k, v in jd_sections.items()},
             "resume_sections_parsed": {k: v for k, v in resume_sections.items()},

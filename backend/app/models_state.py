@@ -2,3 +2,4 @@
 
 nlp_model = None
 sentence_model = None
+word2vec_model = None  # gensim Word2Vec trained on Canadian job corpus

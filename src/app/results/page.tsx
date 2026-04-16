@@ -6,6 +6,7 @@ import { FileSearch, ArrowLeft, FlaskConical, MapPin, Building2 } from "lucide-r
 import { HeroScore } from "@/components/results/hero-score";
 import { SectionAccordion } from "@/components/results/section-accordion";
 import { NlpDetailsPanel } from "@/components/results/nlp-details-panel";
+import { RewriteSuggestionsPanel } from "@/components/results/rewrite-suggestions-panel";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 interface MatchResults {
@@ -17,6 +18,13 @@ interface MatchResults {
     matched: string[];
     partial: string[];
     missing: string[];
+  }>;
+  rewrite_suggestions: Array<{
+    section: string;
+    missing_item: string;
+    suggestion: string;
+    related_in_resume: string[];
+    w2v_expanded: boolean;
   }>;
   nlp_details: {
     jd_sections_parsed: Record<string, string[]>;
@@ -325,6 +333,11 @@ export default function ResultsPage() {
               />
             ))}
           </div>
+
+          {/* Rewrite suggestions powered by Word2Vec */}
+          {results.payload.rewrite_suggestions?.length > 0 && (
+            <RewriteSuggestionsPanel suggestions={results.payload.rewrite_suggestions} />
+          )}
 
           {/* NLP Details panel */}
           {showNlpDetails && (

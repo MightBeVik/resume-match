@@ -1,5 +1,6 @@
 """FastAPI application with CORS and model preloading."""
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import nltk
 import spacy
@@ -8,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sentence_transformers import SentenceTransformer
 
 from app import models_state
+
+W2V_MODEL_PATH = Path(__file__).resolve().parents[2] / "job-pipeline" / "data" / "word2vec_jobs.model"
 
 
 @asynccontextmanager
@@ -29,6 +32,14 @@ async def lifespan(app: FastAPI):
 
     # Load sentence-transformers model
     models_state.sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+    # Load Word2Vec model trained on Canadian job corpus
+    if W2V_MODEL_PATH.exists():
+        from gensim.models import Word2Vec
+        models_state.word2vec_model = Word2Vec.load(str(W2V_MODEL_PATH))
+        print(f"[startup] Word2Vec loaded — vocab size: {len(models_state.word2vec_model.wv):,}")
+    else:
+        print(f"[startup] Word2Vec model not found at {W2V_MODEL_PATH} — skill expansion disabled")
 
     yield
 

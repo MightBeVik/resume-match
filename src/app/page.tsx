@@ -2,16 +2,23 @@
 
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, FileSearch, Loader2, Upload, FileText, X, ListFilter, MapPin } from "lucide-react";
+import { ArrowRight, FileSearch, Loader2, Upload, FileText, X, ListFilter, MapPin, Users, Search } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-type Mode = "single" | "rank";
+type Mode = "single" | "rank" | "bulk";
+
+interface BulkResumeEntry {
+  name: string;
+  resume_text: string;
+}
 
 export default function InputPage() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("rank");
+
+  // Single / rank mode state
   const [resumeText, setResumeText] = useState("");
   const [jobDescription, setJobDescription] = useState("");
   const [province, setProvince] = useState("ON");
@@ -25,7 +32,19 @@ export default function InputPage() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Bulk mode state
+  const [bulkResumes, setBulkResumes] = useState<BulkResumeEntry[]>([]);
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkDragOver, setBulkDragOver] = useState(false);
+  const [bulkProvince, setBulkProvince] = useState("");
+  const [bulkCity, setBulkCity] = useState("");
+  const [bulkKeyword, setBulkKeyword] = useState("");
+  const [bulkCategory, setBulkCategory] = useState("");
+  const [bulkMaxJobs, setBulkMaxJobs] = useState("30");
+  const bulkFileInputRef = useRef<HTMLInputElement>(null);
+
   const canSubmit = resumeText.length >= 50 && !loading && !uploading && (mode === "rank" || jobDescription.length >= 50);
+  const canBulkSubmit = bulkResumes.length > 0 && !loading && !bulkUploading;
 
   const handleFileUpload = useCallback(async (file: File) => {
     if (!file.name.toLowerCase().endsWith(".pdf")) {
@@ -80,6 +99,67 @@ export default function InputPage() {
     setUploadedFile(null);
     setResumeText("");
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  // Bulk upload handler
+  const handleBulkFileUpload = useCallback(async (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setError("Only PDF files are supported");
+      return;
+    }
+    setBulkResumes((prev) => {
+      if (prev.length >= 20) { setError("Maximum 20 resumes"); return prev; }
+      if (prev.some((r) => r.name === file.name)) { setError(`"${file.name}" already added`); return prev; }
+      return prev; // real upload happens async below
+    });
+    setBulkUploading(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${API_BASE_URL}/api/upload-resume`, { method: "POST", body: form });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Upload failed"); }
+      const data = await res.json();
+      setBulkResumes((prev) => {
+        if (prev.length >= 20) return prev;
+        if (prev.some((r) => r.name === data.filename)) return prev;
+        return [...prev, { name: data.filename, resume_text: data.text }];
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setBulkUploading(false);
+    }
+  }, []);
+
+  const handleBulkSubmit = async () => {
+    if (bulkResumes.length === 0) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const payload = {
+        resumes: bulkResumes,
+        province: bulkProvince || null,
+        city: bulkCity || null,
+        keyword: bulkKeyword || null,
+        broad_category: bulkCategory || null,
+        max_jobs: Number(bulkMaxJobs) || 30,
+      };
+      const res = await fetch(`${API_BASE_URL}/api/bulk-match`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Bulk match failed"); }
+      const data = await res.json();
+      sessionStorage.setItem("bulkMatchResult", JSON.stringify(data));
+      sessionStorage.removeItem("selectedJobIds");
+      sessionStorage.removeItem("selectedJobCards");
+      router.push("/leaderboard");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong");
+      setLoading(false);
+    }
   };
 
   const handleAnalyze = async () => {
@@ -151,6 +231,14 @@ export default function InputPage() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => router.push("/jobs")}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+            style={{ color: "var(--text-secondary)", background: "var(--bg-hover)" }}
+          >
+            <Search size={13} />
+            Job Search
+          </button>
           <ThemeToggle />
           <button
             onClick={() => router.push("/about")}
@@ -180,10 +268,11 @@ export default function InputPage() {
               {[
                 { key: "rank", label: "Rank Stored Jobs", icon: ListFilter },
                 { key: "single", label: "Single JD Analysis", icon: FileSearch },
+                { key: "bulk", label: "Bulk Match", icon: Users },
               ].map(({ key, label, icon: Icon }) => (
                 <button
                   key={key}
-                  onClick={() => setMode(key as Mode)}
+                  onClick={() => { setMode(key as Mode); setError(null); }}
                   className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors"
                   style={{
                     background: mode === key ? "var(--text-primary)" : "transparent",
@@ -197,7 +286,112 @@ export default function InputPage() {
             </div>
           </div>
 
-          {/* Input cards */}
+          {/* ── BULK MODE ── */}
+          {mode === "bulk" && (
+            <div className="space-y-5">
+              <div className="grid grid-cols-2 gap-5">
+                {/* Multi-PDF upload */}
+                <div className="rounded-[var(--radius)] border overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>
+                  <div className="px-5 py-3 border-b" style={{ borderColor: "var(--border)", background: "var(--bg-page)" }}>
+                    <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Resumes ({bulkResumes.length}/20)</h2>
+                  </div>
+                  <div className="p-5">
+                    <div
+                      onDrop={(e) => { e.preventDefault(); setBulkDragOver(false); Array.from(e.dataTransfer.files).forEach(handleBulkFileUpload); }}
+                      onDragOver={(e) => { e.preventDefault(); setBulkDragOver(true); }}
+                      onDragLeave={() => setBulkDragOver(false)}
+                      onClick={() => bulkFileInputRef.current?.click()}
+                      className="flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-5 cursor-pointer transition-colors"
+                      style={{ borderColor: bulkDragOver ? "var(--accent)" : "var(--border)", background: bulkDragOver ? "var(--accent-light)" : "var(--bg-page)" }}
+                    >
+                      {bulkUploading ? <Loader2 size={22} className="animate-spin" style={{ color: "var(--accent)" }} /> : <Upload size={22} style={{ color: "var(--text-muted)" }} />}
+                      <p className="mt-2 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+                        {bulkUploading ? "Extracting text…" : "Drop PDFs or click to upload"}
+                      </p>
+                      <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>Multiple PDFs supported</p>
+                    </div>
+                    <input ref={bulkFileInputRef} type="file" accept=".pdf" multiple className="hidden"
+                      onChange={(e) => Array.from(e.target.files ?? []).forEach(handleBulkFileUpload)} />
+                    {bulkResumes.length > 0 && (
+                      <ul className="mt-3 space-y-1">
+                        {bulkResumes.map((r) => (
+                          <li key={r.name} className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs" style={{ background: "var(--success-bg)" }}>
+                            <FileText size={12} style={{ color: "var(--success-text)" }} />
+                            <span className="flex-1 truncate font-medium" style={{ color: "var(--success-text)" }}>{r.name}</span>
+                            <button onClick={() => setBulkResumes((p) => p.filter((x) => x.name !== r.name))} className="p-0.5 rounded hover:opacity-70">
+                              <X size={12} style={{ color: "var(--success-text)" }} />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+
+                {/* Filters */}
+                <div className="rounded-[var(--radius)] border overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-card)" }}>
+                  <div className="px-5 py-3 border-b" style={{ borderColor: "var(--border)", background: "var(--bg-page)" }}>
+                    <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Job Filters</h2>
+                  </div>
+                  <div className="p-5 space-y-3">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Keyword</label>
+                      <input value={bulkKeyword} onChange={(e) => setBulkKeyword(e.target.value)}
+                        className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                        style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--bg-page)" }}
+                        placeholder="nurse, engineer…" />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Province</label>
+                      <input value={bulkProvince} onChange={(e) => setBulkProvince(e.target.value.toUpperCase())}
+                        className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                        style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--bg-page)" }}
+                        placeholder="ON" />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>City</label>
+                      <input value={bulkCity} onChange={(e) => setBulkCity(e.target.value)}
+                        className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                        style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--bg-page)" }}
+                        placeholder="Toronto" />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Category</label>
+                      <input value={bulkCategory} onChange={(e) => setBulkCategory(e.target.value)}
+                        className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                        style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--bg-page)" }}
+                        placeholder="Engineering" />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Max Jobs (1–50)</label>
+                      <input value={bulkMaxJobs} onChange={(e) => setBulkMaxJobs(e.target.value)} type="number" min={1} max={50}
+                        className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                        style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--bg-page)" }} />
+                    </div>
+                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                      Or <button onClick={() => router.push("/jobs")} className="underline" style={{ color: "var(--accent)" }}>pick specific jobs</button> from the Job Search page.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Error */}
+              {error && <div className="p-3 rounded-lg text-sm" style={{ background: "var(--danger-bg)", color: "var(--danger-text)" }}>{error}</div>}
+
+              {/* Bulk submit */}
+              <div className="flex justify-center">
+                <button onClick={handleBulkSubmit} disabled={!canBulkSubmit}
+                  className="flex items-center gap-2 px-8 py-3 rounded-lg text-sm font-semibold transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: "var(--text-primary)", color: "var(--text-on-primary)" }}
+                >
+                  {loading ? <><Loader2 size={16} className="animate-spin" />Running NLP pipeline…</> : <>Run Bulk Match<ArrowRight size={16} /></>}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── SINGLE / RANK MODES ── */}
+          {mode !== "bulk" && (
           <div className={`grid gap-6 ${mode === "single" ? "grid-cols-2" : "grid-cols-[1.2fr_0.8fr]"}`}>
             {/* Resume */}
             <div
@@ -389,9 +583,10 @@ export default function InputPage() {
               </div>
             </div>
           </div>
+          )}
 
-          {/* Error message */}
-          {error && (
+          {/* Error message (single/rank) */}
+          {mode !== "bulk" && error && (
             <div
               className="mt-4 p-3 rounded-lg text-sm"
               style={{ background: "var(--danger-bg)", color: "var(--danger-text)" }}
@@ -400,7 +595,8 @@ export default function InputPage() {
             </div>
           )}
 
-          {/* Analyze button */}
+          {/* Analyze button (single/rank) */}
+          {mode !== "bulk" && (
           <div className="mt-8 flex justify-center">
             <button
               onClick={handleAnalyze}
@@ -421,6 +617,7 @@ export default function InputPage() {
               )}
             </button>
           </div>
+          )}
         </div>
       </main>
     </div>
