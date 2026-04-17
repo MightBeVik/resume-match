@@ -115,6 +115,9 @@ The data pipeline downloads Canadian open data and produces a SQLite database us
 
 ```bash
 cd job-pipeline
+python -m venv venv
+# On Windows: venv\Scripts\activate
+# On macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
 python scripts/run_all.py
 ```
@@ -125,6 +128,9 @@ This creates `job-pipeline/data/jobs.db`. See [`job-pipeline/README.md`](job-pip
 
 ```bash
 cd backend
+python -m venv venv
+# On Windows: venv\Scripts\activate
+# On macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
 python run.py
 ```
