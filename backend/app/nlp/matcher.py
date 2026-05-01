@@ -1,4 +1,5 @@
 """Matcher orchestrator — runs the full NLP pipeline and computes weighted scores."""
+import hashlib
 import re
 
 from app.nlp.preprocessor import preprocess_text
@@ -31,6 +32,66 @@ DEGREE_LEVELS = {
     "master": {"master", "masters", "m.s", "ms", "m.a", "ma", "mba"},
     "phd": {"phd", "doctorate"},
 }
+
+# ---------------------------------------------------------------------------
+# Simple hash-based response cache
+# Keyed on (sha256(resume_text), sha256(jd_text)) so identical pairs are
+# served instantly — critical for bulk_match which calls analyze_match in an
+# O(resumes × jobs) loop.
+# ---------------------------------------------------------------------------
+_MATCH_CACHE: dict[tuple[str, str], dict] = {}
+_CACHE_MAX = 512  # evict oldest when full
+
+
+def _cache_key(resume_text: str, jd_text: str) -> tuple[str, str]:
+    return (
+        hashlib.sha256(resume_text.encode()).hexdigest(),
+        hashlib.sha256(jd_text.encode()).hexdigest(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Years-of-experience helpers
+# ---------------------------------------------------------------------------
+
+# Matches "3+ years", "2-5 years", "at least 3 years", "minimum 5 years", etc.
+_YEARS_REQ_PATTERN = re.compile(
+    r"(?:at\s+least\s+|minimum\s+|(?:a\s+)?minimum\s+of\s+)?(\d+)(?:\s*[-–]\s*\d+)?\+?\s+years?",
+    re.IGNORECASE,
+)
+
+# Matches "20XX – 20XX" or "20XX - present" style date ranges in resumes
+_DATE_RANGE_PATTERN = re.compile(
+    r"(20\d{2}|19\d{2})\s*[-–]\s*(20\d{2}|19\d{2}|present|current|now)",
+    re.IGNORECASE,
+)
+
+
+def _extract_years_requirement(item: str) -> int | None:
+    """Return the minimum years required from a JD item, or None if not stated."""
+    match = _YEARS_REQ_PATTERN.search(item)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _estimate_resume_experience_years(resume_text: str) -> float:
+    """Estimate total years of professional experience from date ranges in the resume.
+
+    Sums all non-overlapping year-span pairs found.  Returns 0 if no dates detected.
+    """
+    import datetime
+    current_year = datetime.datetime.now().year
+    total = 0.0
+    for match in _DATE_RANGE_PATTERN.finditer(resume_text):
+        start_year = int(match.group(1))
+        end_raw = match.group(2).lower()
+        end_year = current_year if end_raw in {"present", "current", "now"} else int(end_raw)
+        span = max(0, end_year - start_year)
+        if 0 < span <= 50:  # sanity check
+            total += span
+    # Cap at 40 to avoid education date ranges inflating the total unrealistically
+    return min(total, 40.0)
 
 
 def _get_verdict(score: int) -> str:
@@ -70,7 +131,7 @@ def _generate_summary(score: int, sections: dict) -> str:
 
 def _normalize_text(text: str) -> str:
     text = text.lower()
-    text = text.replace("’", "'")
+    text = text.replace("'", "'")
     text = re.sub(r"[^a-z0-9+#./\s]", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
@@ -126,7 +187,13 @@ def _match_education_item(item: str, resume_text: str, resume_education: list[st
     return "missing"
 
 
-def _match_items(jd_items: list[str], resume_text: str, resume_skills: list[str], resume_education: list[str]) -> dict:
+def _match_items(
+    jd_items: list[str],
+    resume_text: str,
+    resume_skills: list[str],
+    resume_education: list[str],
+    resume_years: float = 0.0,
+) -> dict:
     """Match JD requirement items against resume content.
 
     Returns: {"score": int, "matched": [...], "partial": [...], "missing": [...]}
@@ -150,6 +217,22 @@ def _match_items(jd_items: list[str], resume_text: str, resume_skills: list[str]
 
         item_lower = item_clean.lower()
         normalized_item = _normalize_text(item_clean)
+
+        # --- Years-of-experience check ---
+        required_years = _extract_years_requirement(item_clean)
+        if required_years is not None:
+            if resume_years >= required_years:
+                matched.append(item_clean)
+            elif resume_years >= required_years * 0.6:
+                # Candidate has a significant portion of required years
+                partial.append(item_clean)
+            else:
+                # Fall through to regular matching — skill may still be found
+                # even if years are unclear
+                required_years = None  # don't skip, let text matching decide
+
+        if required_years is not None:
+            continue  # already classified by years logic
 
         if _is_education_item(item_clean):
             education_match = _match_education_item(item_clean, resume_text, resume_education)
@@ -250,37 +333,51 @@ def _extract_education_requirements(text: str) -> list[str]:
 def analyze_match(resume_text: str, job_description: str) -> dict:
     """Run the full NLP analysis pipeline.
 
+    Results are cached by (resume_hash, jd_hash) so repeated calls for the
+    same pair — e.g. during bulk_match — are served instantly.
+
     Steps:
-    1. Preprocess both texts
-    2. Parse into sections
-    3. Extract entities
-    4. Extract TF-IDF keywords
-    5. Compute per-section matches
-    6. Compute similarities
-    7. Build weighted final score
+    1. Check cache
+    2. Preprocess both texts
+    3. Parse into sections
+    4. Extract entities (skills, certifications, education)
+    5. Extract years of experience from resume
+    6. Extract TF-IDF keywords
+    7. Compute per-section matches
+    8. Compute similarities
+    9. Build weighted final score
+    10. Cache and return
 
     Returns the full response dict matching the API schema.
     """
-    # Step 1: Preprocess
+    # Step 1: Cache lookup
+    key = _cache_key(resume_text, job_description)
+    if key in _MATCH_CACHE:
+        return _MATCH_CACHE[key]
+
+    # Step 2: Preprocess
     preprocess_text(resume_text)
     preprocess_text(job_description)
 
-    # Step 2: Parse sections
+    # Step 3: Parse sections
     jd_sections = parse_job_description(job_description)
     resume_sections = parse_resume(resume_text)
 
-    # Step 3: Extract entities
+    # Step 4: Extract entities
     resume_entities = extract_entities(resume_text)
     resume_skills = resume_entities["skills"]
     resume_education = resume_entities["education"]
 
     full_resume = resume_text
 
-    # Step 4: TF-IDF keywords
+    # Step 5: Estimate years of experience from date ranges in the resume
+    resume_years = _estimate_resume_experience_years(resume_text)
+
+    # Step 6: TF-IDF keywords
     jd_keywords = extract_keywords(job_description, top_n=15)
     resume_keywords = extract_keywords(resume_text, top_n=15)
 
-    # Step 5: Per-section matching
+    # Step 7: Per-section matching
     skill_items = [item for item in jd_sections["requirements"] if not _is_education_item(item)]
 
     skills_result = _match_items(
@@ -288,6 +385,7 @@ def analyze_match(resume_text: str, job_description: str) -> dict:
         full_resume,
         resume_skills,
         resume_education,
+        resume_years,
     )
 
     experience_result = _match_items(
@@ -295,6 +393,7 @@ def analyze_match(resume_text: str, job_description: str) -> dict:
         resume_sections.get("experience", "") + " " + resume_sections.get("summary", ""),
         resume_skills,
         resume_education,
+        resume_years,
     )
 
     # Education: filter education items from requirements, or extract from full JD
@@ -306,6 +405,7 @@ def analyze_match(resume_text: str, job_description: str) -> dict:
         resume_sections.get("education", "") + " " + full_resume,
         resume_skills,
         resume_education,
+        resume_years,
     )
 
     preferred_result = _match_items(
@@ -313,13 +413,14 @@ def analyze_match(resume_text: str, job_description: str) -> dict:
         full_resume,
         resume_skills,
         resume_education,
+        resume_years,
     )
 
-    # Step 6: Similarities
+    # Step 8: Similarities
     tfidf_sim = tfidf_cosine_similarity(resume_text, job_description)
     sem_sim = semantic_similarity(resume_text, job_description)
 
-    # Step 7: Weighted final score
+    # Step 9: Weighted final score
     semantic_score = int(sem_sim * 100)
     overall_score = int(
         skills_result["score"] * WEIGHTS["skills"]
@@ -343,7 +444,7 @@ def analyze_match(resume_text: str, job_description: str) -> dict:
     # Generate W2V-powered rewrite suggestions for all missing items
     rewrite_suggestions = generate_rewrite_suggestions(sections, resume_text)
 
-    return {
+    result = {
         "overall_score": overall_score,
         "verdict": verdict,
         "summary": summary,
@@ -353,6 +454,7 @@ def analyze_match(resume_text: str, job_description: str) -> dict:
             "jd_sections_parsed": {k: v for k, v in jd_sections.items()},
             "resume_sections_parsed": {k: v for k, v in resume_sections.items()},
             "resume_entities": resume_entities,
+            "resume_years_estimated": round(resume_years, 1),
             "tfidf_top_keywords": {
                 "job_description": jd_keywords,
                 "resume": resume_keywords,
@@ -363,3 +465,10 @@ def analyze_match(resume_text: str, job_description: str) -> dict:
             },
         },
     }
+
+    # Step 10: Store in cache (evict oldest entry when at capacity)
+    if len(_MATCH_CACHE) >= _CACHE_MAX:
+        oldest_key = next(iter(_MATCH_CACHE))
+        del _MATCH_CACHE[oldest_key]
+    _MATCH_CACHE[key] = result
+    return result

@@ -14,7 +14,7 @@
 
 ResumeMatch is a full-stack application that ingests thousands of live Canadian job postings, enriches them with NOC (National Occupational Classification) and OaSIS competency metadata, and uses a multi-signal NLP pipeline to score and rank resumes against those positions.
 
-Users can upload a PDF resume and instantly see how well they match any job in the corpus — or rank their resume against the entire database, filtered by province, city, or occupation category.
+Users can upload a PDF or DOCX resume and instantly see how well they match any job in the corpus — or rank their resume against the entire database, filtered by province, city, or occupation category.
 
 ---
 
@@ -26,8 +26,9 @@ Users can upload a PDF resume and instantly see how well they match any job in t
 | **Corpus Ranking** | Rank your resume against the full enriched job database, filtered by province, city, job title keyword, or NOC broad category. |
 | **Bulk / Leaderboard** | Upload up to 20 resumes, select up to 50 jobs, and generate a resume × job score matrix with an interactive leaderboard. |
 | **Job Search & Browse** | Browse and search the job corpus with paginated results, then hand-pick specific postings for bulk matching. |
-| **PDF Upload** | Drag-and-drop or click-to-upload PDF resumes; text is extracted server-side with `pdfplumber`. |
+| **PDF & DOCX Upload** | Drag-and-drop or click-to-upload PDF and DOCX resumes; text is extracted server-side with `pdfplumber` and `python-docx`. |
 | **Rewrite Suggestions** | Word2Vec-powered suggestions for rephrasing missing skills using terminology that better aligns with the job description. |
+| **Experience Matching** | Intelligent years-of-experience extraction from JDs matched against estimated tenure from resume date ranges. |
 
 ---
 
@@ -48,6 +49,7 @@ The matching engine is powered by authentic Canadian labor market data sourced s
 1. **Job Bank (CKAN):** Downloading live, raw CSV and XLSX postings across the country.
 2. **NOC (National Occupational Classification):** Applying standard structure and occupation categorization identifiers.
 3. **OaSIS:** Using Open Architecture for Skills and Information Systems logic to enrich standard job postings with precise competency metrics.
+4. **Resume Corpus:** (Optional) Augmenting Word2Vec training with professional resume datasets to bridge the gap between "recruiter-speak" and "candidate-speak."
 
 ---
 
@@ -69,7 +71,7 @@ The matching engine is powered by authentic Canadian labor market data sourced s
 │  ┌────────────┐ ┌──────────────┐ ┌────────────┐ ┌────────────┐ │
 │  │  Section   │ │   Entity     │ │  TF-IDF /  │ │  Word2Vec  │ │
 │  │  Parser    │ │  Extractor   │ │  Semantic  │ │  Expander  │ │
-│  │  (spaCy)   │ │  (spaCy)     │ │  (SBERT)   │ │  (Gensim)  │ │
+│  │  (Heuristic)│ │  (Certs+)   │ │ (Corpus)   │ │ (Combined) │ │
 │  └────────────┘ └──────────────┘ └────────────┘ └────────────┘ │
 └──────────────────┬───────────────────────────────────────────────┘
                    │  SQLite
@@ -86,19 +88,19 @@ The matcher produces a **weighted composite score (0–100)** from five dimensio
 
 | Dimension | Weight | Method |
 |---|---|---|
-| Skills | 40% | Entity extraction + keyword overlap + semantic similarity + W2V fallback |
-| Experience | 25% | Section-parsed responsibility matching against resume experience |
+| Skills | 40% | Entity extraction (150+ skills) + keyword overlap + semantic similarity + W2V fallback |
+| Experience | 25% | Section-parsed responsibility matching + Years-of-experience validation |
 | Education | 15% | Degree-level and field-of-study matching with fuzzy normalization |
 | Preferred | 10% | Same pipeline applied to preferred/nice-to-have qualifications |
-| Semantic | 10% | Full-document `all-MiniLM-L6-v2` cosine similarity |
+| Semantic | 10% | Full-document `all-MiniLM-L6-v2` cosine similarity with corpus-fitted TF-IDF |
 
 Each dimension classifies items as **matched**, **partial**, or **missing**, producing per-section scores that roll up into the final weighted result.
 
-### Performance Notes
+### Performance & Optimization
 
-- **Real-Time Responsiveness:** The Next.js frontend utilizes `sessionStorage` caching to instantly render UI view transitions.
+- **Response Caching:** Heavy NLP operations are cached via SHA-256 hashing. Repeated analysis of the same Resume/JD pair (common in leaderboards) is served in O(1) time.
+- **Corpus-Fitted TF-IDF:** The vectorizer is pre-fitted on 5,000+ job descriptions at startup, ensuring IDF weights reflect real-world term importance.
 - **NLP Load Modeling:** The FastAPI server pre-loads SentenceBERT and Gensim models on startup to prevent cold-start latency. 
-- During a heavy **Bulk Leaderboard Match** (e.g., 20 resumes vs. 50 jobs = 1,000 deep semantic analyses), calculations take roughly `30-90 seconds` on modern hardware.
 
 ---
 
@@ -178,7 +180,7 @@ All endpoints are prefixed with `/api`. The backend serves interactive docs at [
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/api/health` | Health check |
-| `POST` | `/api/upload-resume` | Upload a PDF and extract text |
+| `POST` | `/api/upload-resume` | Upload a PDF or DOCX and extract text |
 | `POST` | `/api/analyze` | Analyze a resume against a single job description |
 | `POST` | `/api/rank-jobs` | Rank a resume against the enriched job corpus |
 | `POST` | `/api/jobs/search` | Search and filter jobs with pagination |
@@ -245,7 +247,7 @@ resume-match/
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS v4, Lucide React |
 | **Backend** | FastAPI, Uvicorn, Pydantic v2 |
 | **NLP** | spaCy, NLTK, sentence-transformers (`all-MiniLM-L6-v2`), Gensim Word2Vec, scikit-learn |
-| **Data** | pandas, SQLite, requests, pdfplumber |
+| **Data** | pandas, SQLite, requests, pdfplumber, python-docx |
 | **Testing** | pytest, httpx |
 
 ---

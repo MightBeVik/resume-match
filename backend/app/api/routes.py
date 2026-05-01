@@ -17,6 +17,49 @@ from app.nlp.matcher import analyze_match
 router = APIRouter()
 
 
+def _extract_text_from_pdf(contents: bytes) -> tuple[str, int]:
+    """Extract plain text from a PDF byte stream.
+
+    Returns (text, page_count).
+    Raises ValueError if no text could be extracted.
+    """
+    with pdfplumber.open(io.BytesIO(contents)) as pdf:
+        text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        page_count = len(pdf.pages)
+    text = text.strip()
+    if not text:
+        raise ValueError("Could not extract text from PDF. The file may be image-based.")
+    return text, page_count
+
+
+def _extract_text_from_docx(contents: bytes) -> tuple[str, int]:
+    """Extract plain text from a DOCX byte stream.
+
+    Returns (text, paragraph_count).
+    Raises ValueError if no text could be extracted.
+    """
+    try:
+        from docx import Document  # python-docx
+    except ImportError as exc:
+        raise ValueError("python-docx is not installed. Run: pip install python-docx") from exc
+
+    doc = Document(io.BytesIO(contents))
+    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+
+    # Also extract text from tables (common in resume templates)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                cell_text = cell.text.strip()
+                if cell_text and cell_text not in paragraphs:
+                    paragraphs.append(cell_text)
+
+    text = "\n".join(paragraphs).strip()
+    if not text:
+        raise ValueError("Could not extract text from DOCX. The file may be empty or image-based.")
+    return text, len(paragraphs)
+
+
 @router.get("/health")
 async def health_check():
     return {"status": "ok"}
@@ -24,26 +67,30 @@ async def health_check():
 
 @router.post("/upload-resume")
 async def upload_resume(file: UploadFile = File(...)):
-    """Extract text from an uploaded PDF resume."""
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=422, detail="Only PDF files are supported")
+    """Extract text from an uploaded PDF or DOCX resume."""
+    filename_lower = (file.filename or "").lower()
+
+    if not (filename_lower.endswith(".pdf") or filename_lower.endswith(".docx")):
+        raise HTTPException(
+            status_code=422,
+            detail="Only PDF and DOCX files are supported.",
+        )
 
     try:
         contents = await file.read()
-        with pdfplumber.open(io.BytesIO(contents)) as pdf:
-            text = "\n".join(
-                page.extract_text() or "" for page in pdf.pages
-            )
 
-        text = text.strip()
-        if not text:
-            raise HTTPException(status_code=422, detail="Could not extract text from PDF. The file may be image-based.")
+        if filename_lower.endswith(".pdf"):
+            text, page_count = _extract_text_from_pdf(contents)
+            return {"text": text, "filename": file.filename, "pages": page_count}
 
-        return {"text": text, "filename": file.filename, "pages": len(pdf.pages)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to process PDF: {str(e)}")
+        else:  # .docx
+            text, para_count = _extract_text_from_docx(contents)
+            return {"text": text, "filename": file.filename, "pages": para_count}
+
+    except (ValueError, HTTPException) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to process file: {str(exc)}") from exc
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
